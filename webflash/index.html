@@ -69,6 +69,8 @@
     <p class="ver">If no port shows up: hold <code>BOOT</code>, press <code>RESET</code>, release <code>BOOT</code> and try again.<br>
     Modbus TCP must be enabled in Sigenergy (mySigen app). SigDash only reads data – it never changes the inverter.</p>
   </div>
+  <p class="ver" style="text-align:center;margin-top:18px">Marcin Janczarek · <a href="mailto:sigdashmj@gmail.com">sigdashmj@gmail.com</a><br>
+    <span class="pl">Projekt nieoficjalny, niezwiązany z Sigenergy.</span><span class="en">Unofficial project, not affiliated with Sigenergy.</span></p>
 </main>
 <script>
   fetch('manifest.json').then(r => r.json()).then(m => { document.getElementById('ver').textContent = 'SigDash v' + m.version; });

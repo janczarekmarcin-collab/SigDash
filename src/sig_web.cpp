@@ -192,7 +192,7 @@ static void handle_root()
     h += en ? "Ranges up to 93 days include the 15-minute sheet." : "Zakresy do 93 dni zawierają arkusz 15-minutowy.";
     h += "</p><p style='margin-top:28px;font-size:13px'>SigDash " SIGDASH_VERSION " · ";
     h += en ? "author: " : "autor: ";
-    h += SIGDASH_AUTHOR;
+    h += SIGDASH_AUTHOR " · <a style='color:#8793a6' href='mailto:" SIGDASH_CONTACT "'>" SIGDASH_CONTACT "</a>";
     h += en ? " · unofficial, not affiliated with Sigenergy · read-only"
             : " · nieoficjalny, niezwiązany z Sigenergy · tylko odczyt";
     h += "</p></body></html>";
@@ -208,12 +208,6 @@ static void web_task(void *)
 
     server.on("/", handle_root);
     server.on("/x", handle_export);
-    server.on("/lcd-reset", []() {           // recovery if a display setting leaves the screen unusable
-        sig_lcd_defaults();
-        server.send(200, "text/plain; charset=utf-8", "SigDash: LCD 16 MHz, medium buffer - restarting / restart...");
-        delay(800);
-        esp_restart();
-    });
     server.onNotFound([]() { server.send(404, "text/plain", "SigDash: not found"); });
     server.begin();
     Serial.printf("[WEB] http://%s/\n", WiFi.localIP().toString().c_str());

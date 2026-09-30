@@ -3,7 +3,7 @@
 Nieoficjalny panel dla domowej instalacji Sigenergy na **Waveshare ESP32-S3-Touch-LCD-4.3B**
 (Modbus TCP, tylko odczyt; ceny RCE / Energy-Charts; historia na karcie SD; eksport do Excela).
 
-Autor: Marcin · projekt niezwiązany z Sigenergy.
+Autor: Marcin Janczarek · [sigdashmj@gmail.com](mailto:sigdashmj@gmail.com) · projekt niezwiązany z Sigenergy.
 
 ## Build „XIP” (GitHub Actions)
 

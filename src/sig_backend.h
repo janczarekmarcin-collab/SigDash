@@ -184,12 +184,13 @@ static inline uint8_t  sig_lcd_clk_idx(uint8_t mhz) { return mhz >= 16 ? 0 : (mh
 void sig_lcd_defaults();          // web recovery: 16 MHz, medium buffer, saved
 
 // ---------------- API ----------------
-#define SIGDASH_VERSION "1.6.0"
+#define SIGDASH_VERSION "1.6.1"
 #ifndef SIGDASH_BUILD
 #define SIGDASH_BUILD "Arduino"       // "XIP" = GitHub build with code in PSRAM (see platformio.ini)
 #endif
 // Author shown in "About", on the web page and in the Excel export
-#define SIGDASH_AUTHOR  "Marcin"
+#define SIGDASH_AUTHOR  "Marcin Janczarek"
+#define SIGDASH_CONTACT "sigdashmj@gmail.com"
 
 void sig_backend_begin();                 // call once in setup()
 void sig_mem_report(const char *tag);     // internal / PSRAM usage to Serial

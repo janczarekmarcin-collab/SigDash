@@ -501,6 +501,7 @@ static void gen_info(const ExportReq &r, Sink &o)
         info_row(o, L("Licencja cen", "Price licence"), "energy-charts.info – CC BY 4.0 (ENTSO-E, Bundesnetzagentur | SMARD.de)");
     info_row(o, L("Program", "Software"), "SigDash v" SIGDASH_VERSION);
     info_row(o, L("Autor", "Author"), SIGDASH_AUTHOR);
+    info_row(o, L("Kontakt", "Contact"), SIGDASH_CONTACT);
     info_row(o, L("Zastrzeżenie", "Disclaimer"),
              L("Nieoficjalne narzędzie, niezwiązane z Sigenergy. Wyliczenia są szacunkowe – wiążąca jest faktura sprzedawcy energii.",
                "Unofficial tool, not affiliated with Sigenergy. Figures are estimates – your supplier's bill is binding."));

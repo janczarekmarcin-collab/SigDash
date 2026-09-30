@@ -152,10 +152,6 @@ struct Seg {
 };
 static Seg segs[6];
 static bool g_restarting = false;
-enum { TRIAL_NONE = 0, TRIAL_CLK, TRIAL_BB };
-static void trial_start(int kind, uint8_t old);
-static void lcd_set_clock(uint8_t idx);
-static bool g_bb_trial = false;           // booted with a new, not yet confirmed buffer mode
 static int seg_count = 0;
 
 struct Stepper {
@@ -1397,7 +1393,7 @@ static void about_open()
            [](lv_event_t *) { lv_async_call([](void *) { overlay_close(); }, nullptr); }, nullptr);
 
     char t[160];
-    snprintf(t, sizeof(t), TR("Autor: %s", "Author: %s"), SIGDASH_AUTHOR);
+    snprintf(t, sizeof(t), TR("Autor: %s  ·  %s", "Author: %s  ·  %s"), SIGDASH_AUTHOR, SIGDASH_CONTACT);
     label(ui.overlay, t, &font_pl_18, C_TEXT, 26, 64);
 
     lv_obj_t *d = label(ui.overlay,
@@ -1729,45 +1725,17 @@ static void build_settings()
     // ---------- language & data ----------
     lv_obj_t *l = card(406, 262, 382, 210);
     card_title(l, ICON_LIST, C_ACCENT, TR("Język i dane", "Language & data"));
-    static const char *langs[2] = {"PL", "EN"};
-    make_seg(l, 14, 40, 108, 34, langs, 2, &E.lang, true);
-    // display pixel clock (live): lower = more margin when WiFi / flash load the memory bus
-    static const char *clks[3] = {"LCD 16", "15", "14 MHz"};
-    make_seg(l, 132, 40, 236, 34, clks, 3, &E.lcd_clk, false, []() {
-        // applied live, saved only after "Keep" - otherwise reverted in 15 s
-        E_dirty = 0;
-        uint8_t old = S.lcd_clk;
-        lcd_set_clock(E.lcd_clk);
-        trial_start(TRIAL_CLK, old);
-    });
-    // bounce buffer (needs restart)
-    static const char *bb_pl[3] = {"Bufor mały", "średni", "bez bufora"};
-    static const char *bb_en[3] = {"Buffer small", "medium", "no buffer"};
-    make_seg(l, 14, 80, 354, 34, IS_EN ? bb_en : bb_pl, 3, &E.lcd_bb, false, []() {
-        // saved directly (the board restarts right after); after the restart the user has
-        // 15 s to confirm, otherwise the old mode comes back (also after a power cut)
-        Preferences p;
-        p.begin("sigdash", false);
-        p.putUChar("lcdbb_old", S.lcd_bb);
-        p.putUChar("lcdbb", E.lcd_bb);
-        p.putUChar("lcdbb_try", 1);
-        p.end();
-        sig_req_update_prefs(E);
-        E_dirty = 0;
-        g_restarting = true;
-        set_text(ui.store_lbl, "%s", TR("Restart płytki…", "Restarting…"));
-        lv_timer_create([](lv_timer_t *) { esp_restart(); }, 1500, nullptr);
-    });
-    ui.store_lbl = label(l, "", &font_pl_14, C_DIM, 14, 120);
+    static const char *langs[2] = {"Polski", "English"};
+    make_seg(l, 14, 44, 354, 38, langs, 2, &E.lang, true);
+    ui.store_lbl = label(l, "", &font_pl_14, C_DIM, 14, 90);
     lv_label_set_long_mode(ui.store_lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(ui.store_lbl, 354);
     char eb[64];
-    snprintf(eb, sizeof(eb), "%s  %s", ICON_CHART, TR("Eksport (QR)", "Export (QR)"));
-    lv_obj_t *xb = button(l, eb, 14, 160, 170, 38, C_ACCENT, [](lv_event_t *) { export_open(); }, nullptr);
-    lv_obj_set_style_text_font(lv_obj_get_child(xb, 0), &font_pl_14, 0);
+    snprintf(eb, sizeof(eb), "%s  %s", ICON_CHART, TR("Eksport do Excela (QR)", "Export to Excel (QR)"));
+    button(l, eb, 14, 132, 354, 44, C_ACCENT, [](lv_event_t *) { export_open(); }, nullptr);
     char ab[64];
-    snprintf(ab, sizeof(ab), "v" SIGDASH_VERSION "  ·  %s  " LV_SYMBOL_RIGHT, TR("O programie", "About"));
-    lv_obj_t *al = label(l, ab, &font_pl_14, C_ACCENT, 198, 170);
+    snprintf(ab, sizeof(ab), "SigDash v" SIGDASH_VERSION "  ·  %s  " LV_SYMBOL_RIGHT, TR("O programie", "About"));
+    lv_obj_t *al = label(l, ab, &font_pl_14, C_ACCENT, 14, 184);
     lv_obj_add_flag(al, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(al, 12);
     lv_obj_add_event_cb(al, [](lv_event_t *) { about_open(); }, LV_EVENT_CLICKED, nullptr);
@@ -1833,100 +1801,6 @@ static void update_settings()
 // PAGE SWITCH + PERIODIC UPDATE
 // ============================================================
 
-// Display pixel clock from the settings (applied by the driver in the next VSYNC)
-static esp_lcd_panel_handle_t g_panel = nullptr;
-static uint8_t lcd_clk_applied = 255;
-static void lcd_set_clock(uint8_t idx)
-{
-    if (!g_panel) return;
-    uint32_t hz = sig_lcd_clk_hz(idx);
-    esp_err_t r = esp_lcd_rgb_panel_set_pclk(g_panel, hz);
-    lcd_clk_applied = idx;
-    Serial.printf("[LCD] pixel clock %u MHz (%s)\n", (unsigned)(hz / 1000000), r == ESP_OK ? "ok" : esp_err_to_name(r));
-}
-
-// ---------- "keep this display setting?" with automatic revert ----------
-static int      trial_kind = TRIAL_NONE;
-static uint8_t  trial_old = 0;
-static int      trial_left = 0;
-static lv_obj_t *trial_bar = nullptr, *trial_lbl = nullptr;
-static lv_timer_t *trial_tmr = nullptr;
-
-static void trial_end(bool keep)
-{
-    int kind = trial_kind;
-    trial_kind = TRIAL_NONE;
-    if (trial_tmr) { lv_timer_delete(trial_tmr); trial_tmr = nullptr; }
-    if (trial_bar) { lv_obj_delete(trial_bar); trial_bar = nullptr; trial_lbl = nullptr; }
-
-    if (kind == TRIAL_CLK) {
-        if (!keep) {
-            E.lcd_clk = trial_old;
-            lcd_set_clock(trial_old);
-        }
-        sig_req_update_prefs(E);
-        E_dirty = 0;
-        if (page == PAGE_SETTINGS) go_page(page);          // restyle the buttons
-    } else if (kind == TRIAL_BB) {
-        Preferences p;
-        p.begin("sigdash", false);
-        if (keep) {
-            p.putUChar("lcdbb_try", 0);
-        } else {
-            uint8_t old = p.getUChar("lcdbb_old", 1);
-            p.putUChar("lcdbb", old);
-            p.putUChar("lcdbb_try", 0);
-            E.lcd_bb = old;
-            sig_req_update_prefs(E);
-            E_dirty = 0;
-        }
-        p.end();
-        Serial.printf("[LCD] buffer mode %s\n", keep ? "kept" : "reverted - restarting");
-        if (!keep) {
-            g_restarting = true;
-            lv_timer_create([](lv_timer_t *) { esp_restart(); }, 1200, nullptr);
-        }
-    }
-}
-
-static void trial_show()
-{
-    set_text(trial_lbl, TR("Czy obraz jest poprawny? Powrót za %d s", "Is the picture OK? Reverting in %d s"), trial_left);
-}
-
-static void trial_start(int kind, uint8_t old)
-{
-    if (trial_kind != TRIAL_NONE) {
-        // a second change during a trial: keep the first "old" value, just restart the countdown
-        // (no page rebuild here - we are inside the button's event)
-        if (trial_kind == kind) old = trial_old;
-        if (trial_tmr) { lv_timer_delete(trial_tmr); trial_tmr = nullptr; }
-        if (trial_bar) { lv_obj_delete(trial_bar); trial_bar = nullptr; trial_lbl = nullptr; }
-    }
-    trial_kind = kind;
-    trial_old = old;
-    trial_left = 15;
-    trial_bar = box(lv_layer_top(), 120, 396, 560, 70, C_CARD2, 14);
-    lv_obj_add_flag(trial_bar, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_border_width(trial_bar, 2, 0);
-    lv_obj_set_style_border_color(trial_bar, lv_color_hex(C_ACCENT), 0);
-    trial_lbl = label(trial_bar, "", &font_pl_18, C_TEXT, 18, 22);
-    button(trial_bar, TR("Zostaw", "Keep"), 420, 12, 124, 46, C_ACCENT,
-           [](lv_event_t *) { lv_async_call([](void *) { trial_end(true); }, nullptr); }, nullptr);
-    trial_show();
-    trial_tmr = lv_timer_create([](lv_timer_t *) {
-        if (--trial_left <= 0) trial_end(false);
-        else trial_show();
-    }, 1000, nullptr);
-}
-
-static void apply_lcd_clock()
-{
-    if (trial_kind == TRIAL_CLK) return;                 // live trial in progress
-    if (!g_panel || S.lcd_clk == lcd_clk_applied) return;
-    lcd_set_clock(S.lcd_clk);
-}
-
 static void update_all()
 {
     sig_get_data(D);
@@ -1934,7 +1808,6 @@ static void update_all()
     sig_get_money(M);
     sig_get_status(N);
     sig_get_settings(S);
-    apply_lcd_clock();
 
     update_topbar();
     switch (page) {
@@ -2025,40 +1898,15 @@ void setup()
     auto *lcd_bus = lcd->getBus();
     if (lcd_bus->getBasicAttributes().type == ESP_PANEL_BUS_TYPE_RGB) {
         lcd->configFrameBufferNumber(frame_buffer_count);
-        // Bounce buffer preset (Settings). Small buffers keep the copy interrupt short, so the
-        // driver's per-frame DMA restart (VSYNC) is not delayed -> no permanent shift.
-        Preferences p;
-        p.begin("sigdash", false);
-        uint8_t bb = p.getUChar("lcdbb", 1);
-        uint8_t clk = sig_lcd_clk_idx(p.getUChar("lcdmhz", 16));
-        uint8_t tr = p.getUChar("lcdbb_try", 0);
-        if (tr >= 2) {
-            // the previous start with the new mode was never confirmed (bad picture, power cut) -> back
-            bb = p.getUChar("lcdbb_old", 1);
-            p.putUChar("lcdbb", bb);
-            p.putUChar("lcdbb_try", 0);
-            Serial.println("[LCD] new buffer mode not confirmed - reverted");
-        } else if (tr == 1) {
-            p.putUChar("lcdbb_try", 2);
-            g_bb_trial = true;
-        }
-        p.end();
-        if (bb > 2) bb = 1;
+        // Fixed display timing: 16 MHz + 10-line bounce buffer (Waveshare default).
+        // With the program running from PSRAM (XIP build) this is stable - the
+        // experimental clock / buffer settings from v1.5.x were removed.
         auto *rgb = static_cast<BusRGB *>(lcd_bus);
-        if (bb == 2) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-            const_cast<esp_lcd_rgb_panel_config_t *>(rgb->getRgbConfig())->bounce_buffer_size_px = 0;
-#pragma GCC diagnostic pop
-        } else {
-            rgb->configRGB_BounceBufferSize(lcd->getFrameWidth() * (bb == 1 ? 10 : 4));
-        }
-        rgb->configRGB_FreqHz(sig_lcd_clk_hz(clk));
-        lcd_clk_applied = clk;
+        rgb->configRGB_BounceBufferSize(lcd->getFrameWidth() * 10);
+        rgb->configRGB_FreqHz(16 * 1000 * 1000);
     }
 
     assert(board->begin());
-    g_panel = lcd->getRefreshPanelHandle();
     if (lcd_bus->getBasicAttributes().type == ESP_PANEL_BUS_TYPE_RGB) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -2122,7 +1970,6 @@ void setup()
     if (!S.ssid[0]) sig_req_wifi_scan();
 
     lv_timer_create(update_timer_cb, 1000, nullptr);
-    if (g_bb_trial) trial_start(TRIAL_BB, 0);
 
     esp_lv_adapter_unlock();
     Serial.println("SigDash v" SIGDASH_VERSION " (" SIGDASH_BUILD ") READY");
