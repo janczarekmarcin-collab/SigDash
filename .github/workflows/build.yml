@@ -1,1 +1,101 @@
+# SigDash - automatic build with code running from PSRAM (XIP)
+# + web installer published on GitHub Pages.
+# Runs on every change in the repository, or manually: Actions -> Build SigDash -> Run workflow.
 
+name: Build SigDash
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: sigdash-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache (PlatformIO packages and rebuilt Arduino libraries)
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install pioarduino
+        run: pip install -U pioarduino
+
+      - name: Build firmware (first run ~15-30 min - Arduino libraries are rebuilt)
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: pio run -e sigdash
+
+      - name: Prepare web installer
+        run: |
+          set -e
+          B=.pio/build/sigdash
+          mkdir -p site
+          cp webflash/index.html webflash/boot_app0.bin site/
+          cp "$B/bootloader.bin" "$B/partitions.bin" site/
+          cp "$B/firmware.bin" site/SigDash.bin
+          VER=$(grep -oP '#define SIGDASH_VERSION "\K[^"]+' src/sig_backend.h)
+          cat > site/manifest.json <<EOF
+          {
+            "name": "SigDash",
+            "version": "${VER} XIP",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "bootloader.bin", "offset": 0 },
+                  { "path": "partitions.bin", "offset": 32768 },
+                  { "path": "boot_app0.bin",  "offset": 57344 },
+                  { "path": "SigDash.bin",    "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          EOF
+          ls -la site
+          echo "### SigDash ${VER} (XIP) built" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload files (Actions -> this run -> Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SigDash-webflash
+          path: site
+
+      - name: Upload for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  # Needs: Settings -> Pages -> Source: "GitHub Actions" (free for public repositories)
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish web installer
+        id: deployment
+        uses: actions/deploy-pages@v4
